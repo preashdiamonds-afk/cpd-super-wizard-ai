@@ -34,7 +34,7 @@ jobs:
 
       - name: Extract project ZIP
         run: |
-          ZIP_FILE="CPD_SUPER_WIZARD_AI_v1_7_REAL_MULTI_SOURCE_MANUAL_SIGNAL.zip"
+          ZIP_FILE="CPD_SUPER_WIZARD_AI_v1_7_REAL_MULTI_SOURCE_MANUAL_SIGNAL_FIXED.zip"
           unzip -oq "$ZIP_FILE"
           PROJECT_DIR=$(dirname "$(find . -type f -path '*/app/build.gradle' | head -n 1)")
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
