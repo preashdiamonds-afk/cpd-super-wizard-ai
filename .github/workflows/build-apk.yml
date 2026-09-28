@@ -1,4 +1,4 @@
-name: Build C.P.D SUPER WIZARD AI APK
+name: CPD-SUPER-WIZARD-AI-v1.7-NEW
 
 on:
   workflow_dispatch:
