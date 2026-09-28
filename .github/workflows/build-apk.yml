@@ -48,6 +48,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: CPD-SUPER-WIZARD-AI-Manual-APK
-          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          path: ./CPD_SUPER_WIZARD_AI_Manual_v1/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
