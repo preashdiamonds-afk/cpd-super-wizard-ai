@@ -1,0 +1,55 @@
+{
+  "updated_at": "2026-09-29T20:55:08.931226+00:00",
+  "scanner": "C.P.D CLOUD SCANNER",
+  "market_data": "Twelve Data",
+  "active": null,
+  "history": [],
+  "status": "SCANNING \u2022 no confirmed C.P.D setup",
+  "schedule": "quality scan",
+  "candidates": [
+    {
+      "symbol": "EUR/USD",
+      "valid": false,
+      "status": "insufficient data",
+      "score": null,
+      "price": null,
+      "pattern": null,
+      "sr": null,
+      "sr_quality": null,
+      "breakout": null
+    },
+    {
+      "symbol": "GBP/USD",
+      "valid": false,
+      "status": "insufficient data",
+      "score": null,
+      "price": null,
+      "pattern": null,
+      "sr": null,
+      "sr_quality": null,
+      "breakout": null
+    },
+    {
+      "symbol": "USD/JPY",
+      "valid": false,
+      "status": "insufficient data",
+      "score": null,
+      "price": null,
+      "pattern": null,
+      "sr": null,
+      "sr_quality": null,
+      "breakout": null
+    },
+    {
+      "symbol": "XAU/USD",
+      "valid": false,
+      "status": "insufficient data",
+      "score": null,
+      "price": null,
+      "pattern": null,
+      "sr": null,
+      "sr_quality": null,
+      "breakout": null
+    }
+  ]
+}
