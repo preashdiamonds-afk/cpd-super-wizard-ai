@@ -1,4 +1,4 @@
-name: CPD-SUPER-WIZARD-AI-v1.7-NEW
+name: CPD-SUPER-WIZARD-AI-v1.8-CLOUD-QUALITY
 
 on:
   workflow_dispatch:
@@ -47,7 +47,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: CPD-SUPER-WIZARD-AI-Manual-APK
+          name: CPD-SUPER-WIZARD-AI-v1.8-CLOUD-QUALITY
           path:   ${{ env.PROJECT_DIR }}/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
