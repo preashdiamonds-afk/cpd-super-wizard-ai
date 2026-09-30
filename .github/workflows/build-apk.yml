@@ -46,7 +46,7 @@ jobs:
 
       - name: Extract V2 project
         run: |
-          ZIP_FILE="CPD_SUPER_WIZARD_AI_V2_ADVANCED_MULTI_ENGINE.zip"
+          ZIP_FILE="CPD_SUPER_WIZARD_AI_V2_ADVANCED_MULTI_ENGINE_FIXED.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: V2 ZIP was not found:"
