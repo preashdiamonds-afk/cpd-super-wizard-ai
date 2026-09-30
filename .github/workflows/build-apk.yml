@@ -23,6 +23,12 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+
+      - name: Accept Android SDK licenses
+        run: |
+          yes | sdkmanager --licenses || true
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -31,7 +37,7 @@ jobs:
 
       - name: Extract V2 project
         run: |
-          ZIP_FILE=CPD_SUPER_WIZARD_AI_V2_ADVANCED_MULTI_ENGINE.zip
+          ZIP_FILE="CPD_SUPER_WIZARD_AI_V2_ADVANCED_MULTI_ENGINE.zip"
 
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: V2 ZIP was not found:"
@@ -39,14 +45,16 @@ jobs:
             exit 1
           fi
 
+          rm -rf extracted_project
           mkdir -p extracted_project
+
           unzip -oq "$ZIP_FILE" -d extracted_project
 
           PROJECT_DIR=$(dirname "$(find extracted_project -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)")
 
-          if [ -z "$PROJECT_DIR" ] || [ "$PROJECT_DIR" = "." ]; then
-            echo "ERROR: Android project was not found inside the V2 ZIP."
-            find extracted_project -maxdepth 3 -type f | head -100
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: Android Gradle project was not found inside the V2 ZIP."
+            find extracted_project -maxdepth 4 -type f | head -150
             exit 1
           fi
 
@@ -56,7 +64,7 @@ jobs:
       - name: Build V2 APK
         run: |
           cd "$PROJECT_DIR"
-          gradle --no-daemon assembleDebug
+          gradle --no-daemon --stacktrace assembleDebug
 
       - name: Find APK
         run: |
@@ -64,6 +72,7 @@ jobs:
 
           if [ -z "$APK_PATH" ]; then
             echo "ERROR: No APK was produced."
+            find "$PROJECT_DIR" -type f -name "*.apk" -print
             exit 1
           fi
 
