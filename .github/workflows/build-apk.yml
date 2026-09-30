@@ -21,35 +21,32 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Locate Android SDK
+      - name: Configure Android SDK
         shell: bash
         run: |
-          SDKMANAGER=$(find /usr/local/lib/android/sdk /opt/android-sdk "$HOME" \
-            -type f -name sdkmanager 2>/dev/null | head -1)
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
 
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: Android sdkmanager was not found."
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ ! -f "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found at:"
+            echo "$SDKMANAGER"
+            echo "Checking Android SDK:"
+            ls -la "$ANDROID_HOME" || true
+            find "$ANDROID_HOME" -maxdepth 4 -type f -name sdkmanager 2>/dev/null || true
             exit 1
           fi
 
-          SDK_ROOT=$(dirname "$(dirname "$(dirname "$SDKMANAGER")")")
-
-          echo "Found sdkmanager: $SDKMANAGER"
-          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
-          echo "Android SDK root: $SDK_ROOT"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
 
-      - name: Accept Android licenses
-        shell: bash
-        run: |
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-
-      - name: Install Android build tools
-        shell: bash
-        run: |
-          sdkmanager \
+          "$SDKMANAGER" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
@@ -67,6 +64,8 @@ jobs:
           if [ ! -f "$ZIP_FILE" ]; then
             echo "ERROR: V3 ZIP was not found:"
             echo "$ZIP_FILE"
+            echo "Files in repository:"
+            ls -la
             exit 1
           fi
 
@@ -78,7 +77,7 @@ jobs:
             -print -quit)
 
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: Android project was not found inside V3 ZIP."
+            echo "ERROR: Android project was not found inside the V3 ZIP."
             find extracted_project -maxdepth 4 -type f | head -100
             exit 1
           fi
