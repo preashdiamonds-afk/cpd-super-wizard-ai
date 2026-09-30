@@ -1,4 +1,4 @@
-name: Build C.P.D SUPER WIZARD AI V3 PROTECTED
+name: Build C.P.D SUPER WIZARD AI V7 PREBUILD CORRECTED
 
 on:
   workflow_dispatch:
@@ -21,33 +21,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Configure Android SDK
-        shell: bash
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
         run: |
-          export ANDROID_HOME=/usr/local/lib/android/sdk
-          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
-
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-
-          if [ ! -f "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager not found at:"
-            echo "$SDKMANAGER"
-            echo "Checking Android SDK:"
-            ls -la "$ANDROID_HOME" || true
-            find "$ANDROID_HOME" -maxdepth 4 -type f -name sdkmanager 2>/dev/null || true
-            exit 1
-          fi
-
-          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
-          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-
-          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-
-          "$SDKMANAGER" \
-            "platform-tools" \
+          sdkmanager "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
@@ -56,63 +35,54 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Extract V3 project
-        shell: bash
+      - name: Extract V7 project
         run: |
-          ZIP_FILE="CPD_SUPER_WIZARD_AI_V3_PROTECTED_DEMO_LIVE_LOCKED.zip"
+          ZIP_FILE="CPD_SUPER_WIZARD_AI_V7_PREBUILD_CORRECTED_LIVE_LOCKED.zip"
 
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "ERROR: V3 ZIP was not found:"
-            echo "$ZIP_FILE"
-            echo "Files in repository:"
-            ls -la
+          test -f "$ZIP_FILE" || {
+            echo "ERROR: $ZIP_FILE not found"
             exit 1
-          fi
+          }
 
           mkdir -p extracted_project
           unzip -oq "$ZIP_FILE" -d extracted_project
 
-          SETTINGS_FILE=$(find extracted_project -type f \
+          PROJECT_DIR=$(dirname "$(find extracted_project \
+            -type f \
             \( -name settings.gradle -o -name settings.gradle.kts \) \
-            -print -quit)
+            -print -quit)")
 
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "ERROR: Android project was not found inside the V3 ZIP."
-            find extracted_project -maxdepth 4 -type f | head -100
+          test -n "$PROJECT_DIR" && test "$PROJECT_DIR" != "." || {
+            echo "ERROR: Android project not found"
             exit 1
-          fi
-
-          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+          }
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Android project found at: $PROJECT_DIR"
 
-      - name: Build V3 APK
-        shell: bash
+      - name: Build V7 APK
         run: |
           cd "$PROJECT_DIR"
           gradle --no-daemon assembleDebug --stacktrace
 
       - name: Find APK
-        shell: bash
         run: |
           APK_PATH=$(find "$PROJECT_DIR" \
             -type f \
             -path '*/build/outputs/apk/*/*.apk' \
             -print -quit)
 
-          if [ -z "$APK_PATH" ]; then
-            echo "ERROR: No APK was produced."
+          test -n "$APK_PATH" || {
+            echo "ERROR: No APK produced"
             exit 1
-          fi
+          }
 
-          echo "APK found: $APK_PATH"
-          cp "$APK_PATH" CPD-SUPER-WIZARD-AI-V3-PROTECTED.apk
+          cp "$APK_PATH" \
+            CPD-SUPER-WIZARD-AI-V7-PREBUILD-CORRECTED.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: CPD-SUPER-WIZARD-AI-V3-PROTECTED
-          path: CPD-SUPER-WIZARD-AI-V3-PROTECTED.apk
+          name: CPD-SUPER-WIZARD-AI-V7-PREBUILD-CORRECTED
+          path: CPD-SUPER-WIZARD-AI-V7-PREBUILD-CORRECTED.apk
           if-no-files-found: error
           retention-days: 7
