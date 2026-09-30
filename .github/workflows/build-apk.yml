@@ -34,7 +34,7 @@ jobs:
 
       - name: Extract project ZIP
         run: |
-          ZIP_FILE=CPD_SUPER_WIZARD_AI_v1_8_1_CLOUD_QUALITY_FIXED.zip
+          ZIP_FILE=CPD_SUPER_WIZARD_AI_V2_ADVANCED_MULTI_ENGINE.zip
           unzip -oq "$ZIP_FILE"
           PROJECT_DIR=$(dirname "$(find . -type f -path '*/app/build.gradle' | head -n 1)")
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
@@ -47,7 +47,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: CPD-SUPER-WIZARD-AI-v1.8-CLOUD-QUALITY
+          name: CPD-SUPER-WIZARD-AI-V2-ADVANCED
           path:   ${{ env.PROJECT_DIR }}/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
