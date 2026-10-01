@@ -1,0 +1,81 @@
+name: Build C.P.D SUPER WIZARD AI V7.1 - Complete Preserved
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 35 SDK components
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      # Same simple cloud-build idea used by the original successful build:
+      # find the project ZIP -> extract -> find settings.gradle -> build APK.
+      - name: Find the complete V7.1 source ZIP
+        id: source
+        shell: bash
+        run: |
+          ZIP="CPD_SUPER_WIZARD_AI_V7_1_COMPLETE_CLEAN_BUILD_SOURCE.zip"
+          if [ ! -f "$ZIP" ]; then
+            echo "ERROR: $ZIP was not found in the repository root."
+            echo "Upload the exact source ZIP before running this workflow."
+            exit 1
+          fi
+          unzip -t "$ZIP" >/dev/null
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Extract V7.1 source
+        run: |
+          rm -rf extracted_project
+          mkdir -p extracted_project
+          unzip -q "${{ steps.source.outputs.zip }}" -d extracted_project
+          PROJECT_DIR="$(dirname "$(find extracted_project -type f -name settings.gradle | head -n 1)")"
+          if [ -z "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/settings.gradle" ]; then
+            echo "ERROR: Gradle project was not found after extraction."
+            exit 1
+          fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Using Gradle project: $PROJECT_DIR"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.9'
+
+      - name: Build debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          gradle --no-daemon --stacktrace assembleDebug
+
+      - name: Find APK
+        run: |
+          APK="$(find "$PROJECT_DIR" -type f -path '*/build/outputs/apk/debug/*.apk' | head -n 1)"
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not produced."
+            exit 1
+          fi
+          echo "APK=$APK" >> "$GITHUB_ENV"
+          ls -lh "$APK"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CPD-SUPER-WIZARD-AI-V7.1-COMPLETE-APK
+          path: ${{ env.APK }}
+          if-no-files-found: error
