@@ -1,0 +1,116 @@
+name: Build C.P.D SUPER WIZARD AI V7.1 FINAL APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Find V7.1 source ZIP
+        shell: bash
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/cpd_source"
+          echo "ZIP files in repository:"
+          find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -iname '*.zip' -print
+
+          ZIP=""
+          PREFERRED="$GITHUB_WORKSPACE/CPD_SUPER_WIZARD_AI_V7_1_PREMIUM_DEMO_LIVE_LESSONS_ONLY_LINE_FIX.zip"
+
+          if [ -f "$PREFERRED" ]; then
+            ZIP="$PREFERRED"
+          else
+            while IFS= read -r candidate; do
+              if unzip -tq "$candidate" >/dev/null 2>&1; then
+                if unzip -l "$candidate" | grep -Eq '(^|/)(settings\.gradle|settings\.gradle\.kts)$' &&
+                   unzip -l "$candidate" | grep -Eq '(^|/)app/build\.gradle(\.kts)?$'; then
+                  ZIP="$candidate"
+                  break
+                fi
+              fi
+            done < <(find "$GITHUB_WORKSPACE" -maxdepth 3 -type f -iname '*V7.1*.zip' -o -iname '*V7_1*.zip')
+          fi
+
+          if [ -z "$ZIP" ]; then
+            echo "::error::No valid V7.1 source ZIP containing a Gradle project was found."
+            exit 1
+          fi
+
+          echo "Using source: $ZIP"
+          unzip -q "$ZIP" -d "$RUNNER_TEMP/cpd_source"
+
+      - name: Locate Android Gradle project
+        shell: bash
+        run: |
+          set -e
+          PROJECT_DIR=""
+
+          while IFS= read -r settings; do
+            candidate="$(dirname "$settings")"
+            if [ -f "$candidate/app/build.gradle" ] || [ -f "$candidate/app/build.gradle.kts" ]; then
+              PROJECT_DIR="$candidate"
+              break
+            fi
+          done < <(find "$RUNNER_TEMP/cpd_source" -type f \( -name settings.gradle -o -name settings.gradle.kts \))
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "::error::Gradle project with settings.gradle + app/build.gradle was not found."
+            find "$RUNNER_TEMP/cpd_source" -maxdepth 5 -type f | sort | head -200
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Found project: $PROJECT_DIR"
+          test -f "$PROJECT_DIR/settings.gradle" -o -f "$PROJECT_DIR/settings.gradle.kts"
+          test -f "$PROJECT_DIR/app/build.gradle" -o -f "$PROJECT_DIR/app/build.gradle.kts"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.9'
+
+      - name: Build debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          gradle clean assembleDebug --no-daemon --stacktrace
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          set -e
+          APK="$(find "$PROJECT_DIR" -type f -path '*/build/outputs/apk/debug/*.apk' | head -n 1)"
+          if [ -z "$APK" ]; then
+            echo "::error::APK was not produced."
+            exit 1
+          fi
+          mkdir -p final-apk
+          cp "$APK" final-apk/CPD_SUPER_WIZARD_AI_V7.1_FINAL.apk
+          ls -lh final-apk/CPD_SUPER_WIZARD_AI_V7.1_FINAL.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CPD-SUPER-WIZARD-AI-V7.1-FINAL-APK
+          path: final-apk/CPD_SUPER_WIZARD_AI_V7.1_FINAL.apk
+          if-no-files-found: error
