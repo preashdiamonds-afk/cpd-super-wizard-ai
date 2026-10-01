@@ -1,4 +1,4 @@
-name: Build C.P.D SUPER WIZARD AI V7.1
+name: Build C.P.D SUPER WIZARD AI V7
 
 on:
   workflow_dispatch:
@@ -8,6 +8,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+
       - name: 1 - Check out source
         uses: actions/checkout@v4
 
@@ -18,105 +19,136 @@ jobs:
           java-version: '17'
 
       - name: 3 - Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 4 - Install Android SDK packages
         shell: bash
         run: |
           set -e
-          export ANDROID_HOME=/usr/local/lib/android/sdk
-          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+
           if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROID_HOME" -type f -name sdkmanager -print -quit)"
+            SDKMANAGER="$(command -v sdkmanager || true)"
           fi
-          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
+
+          if [ -z "$SDKMANAGER" ]; then
             echo "ERROR: sdkmanager was not found."
-            find "$ANDROID_HOME" -type f -name sdkmanager -print || true
             exit 1
           fi
-          echo "Using sdkmanager: $SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: 4 - Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.10.2'
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
 
-      - name: 5 - Find and extract V7.1 project
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: 5 - Download and prepare V7 ZIP
         shell: bash
         run: |
           set -e
-          ZIP_FILE="$(find . -maxdepth 3 -type f -name 'CPD_SUPER_WIZARD_AI_V7*.zip' -print -quit)"
+
+          echo "Searching for the V7 ZIP..."
+
+          ZIP_FILE="$(find . -maxdepth 3 -type f \
+            \( -name 'CPD_SUPER_WIZARD_AI_V7*.zip' -o -name 'CPD-SUPER-WIZARD-AI-V7*.zip' \) \
+            -print -quit)"
+
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: V7/V7.1 ZIP was not found."
-            find . -type f -name '*.zip' -print
+            echo "ERROR: No V7 ZIP was found."
+            echo "Upload exactly one CPD_SUPER_WIZARD_AI_V7*.zip file to the repository."
             exit 1
           fi
-          echo "Found: $ZIP_FILE"
+
+          echo "Using ZIP:"
+          echo "$ZIP_FILE"
+
           rm -rf extracted_project
           mkdir -p extracted_project
+
           unzip -q "$ZIP_FILE" -d extracted_project
-          PROJECT_DIR="$(find extracted_project -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -print -quit | xargs -r dirname)"
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: Android Gradle project was not found."
-            find extracted_project -maxdepth 5 -type f | head -150
+
+          PROJECT_DIR="$(find extracted_project -type f \
+            \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) \
+            -print -quit | xargs dirname)"
+
+          if [ -z "$PROJECT_DIR" ] || [ ! -d "$PROJECT_DIR" ]; then
+            echo "ERROR: Android project directory was not found."
             exit 1
           fi
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project directory: $PROJECT_DIR"
-          ls -la "$PROJECT_DIR"
 
-      - name: 6 - Correct V7.1 Java JSON imports
+          echo "Android project:"
+          echo "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: 6 - Repair Java imports
         shell: bash
         run: |
           set -e
-          MAIN_ACTIVITY="$(find "$PROJECT_DIR" -type f -name 'MainActivity.java' -print -quit)"
+
+          MAIN_ACTIVITY="$(find "$PROJECT_DIR" -type f \
+            -name 'MainActivity.java' -print -quit)"
+
           if [ -z "$MAIN_ACTIVITY" ]; then
             echo "ERROR: MainActivity.java was not found."
             exit 1
           fi
+
+          echo "MainActivity:"
+          echo "$MAIN_ACTIVITY"
+
+          # Add JSONObject import if missing.
           if ! grep -q '^import org\.json\.JSONObject;' "$MAIN_ACTIVITY"; then
             sed -i '/^package /a import org.json.JSONObject;' "$MAIN_ACTIVITY"
           fi
+
+          # Add JSONArray import if missing.
           if ! grep -q '^import org\.json\.JSONArray;' "$MAIN_ACTIVITY"; then
             sed -i '/^package /a import org.json.JSONArray;' "$MAIN_ACTIVITY"
           fi
-          echo "MainActivity: $MAIN_ACTIVITY"
-          grep -n 'import org.json' "$MAIN_ACTIVITY" || true
+
+          echo "Verified JSON imports:"
+          grep -n '^import org\.json' "$MAIN_ACTIVITY" || true
+
+          echo "MainActivity beginning:"
+          head -n 30 "$MAIN_ACTIVITY"
 
       - name: 7 - Build APK
         shell: bash
         run: |
           set -e
+
           cd "$PROJECT_DIR"
-          echo "Building from: $(pwd)"
-          if [ -f "./gradlew" ]; then
-            echo "Gradle wrapper found."
-            chmod +x ./gradlew
-            ./gradlew assembleDebug --no-daemon --stacktrace
-          else
-            echo "Gradle wrapper not found. Using installed Gradle 8.10.2."
-            gradle --version
-            gradle assembleDebug --no-daemon --stacktrace
-          fi
+
+          chmod +x gradlew
+
+          ./gradlew clean assembleDebug \
+            --no-daemon \
+            --stacktrace
 
       - name: 8 - Find APK
         shell: bash
         run: |
           set -e
-          APK="$(find "$PROJECT_DIR" -type f -path '*/build/outputs/apk/debug/*.apk' -print -quit)"
-          if [ -z "$APK" ]; then
-            echo "ERROR: APK was not created."
-            find "$PROJECT_DIR" -type f -name '*.apk' -print
+
+          APK_FILE="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" \
+            -type f -name '*.apk' -print -quit)"
+
+          if [ -z "$APK_FILE" ]; then
+            echo "ERROR: APK was not generated."
             exit 1
           fi
-          echo "APK found: $APK"
-          cp "$APK" "$GITHUB_WORKSPACE/CPD-SUPER-WIZARD-AI-V7.1.apk"
+
+          echo "APK found:"
+          echo "$APK_FILE"
+
+          cp "$APK_FILE" "$GITHUB_WORKSPACE/CPD-SUPER-WIZARD-AI-V7.apk"
 
       - name: 9 - Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: CPD-SUPER-WIZARD-AI-V7.1
-          path: CPD-SUPER-WIZARD-AI-V7.1.apk
+          name: CPD-SUPER-WIZARD-AI-V7
+          path: CPD-SUPER-WIZARD-AI-V7.apk
           if-no-files-found: error
