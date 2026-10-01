@@ -1,0 +1,178 @@
+name: Build C.P.D SUPER WIZARD AI V7.1 — FINAL APK (SOURCE FIX 2)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: 1 - Check out source
+        uses: actions/checkout@v4
+
+      - name: 2 - Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 3 - Prepare Android SDK 35
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME" -type f -name sdkmanager -print -quit)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: 4 - Find exact NEW V7.1 ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="CPD_SUPER_WIZARD_AI_V7_1_PREMIUM_DEMO_LIVE_LESSONS_ONLY_LINE_FIX.zip"
+          echo "Looking for: $ZIP_FILE"
+          FOUND="$(find . -type f -name "$ZIP_FILE" -print -quit)"
+          test -n "$FOUND" || { echo "ERROR: exact NEW V7.1 ZIP not found"; find . -type f -name '*.zip' -print; exit 1; }
+          echo "FOUND: $FOUND"
+          rm -rf "$GITHUB_WORKSPACE/cpd_v71_build"
+          mkdir -p "$GITHUB_WORKSPACE/cpd_v71_build"
+          unzip -oq "$FOUND" -d "$GITHUB_WORKSPACE/cpd_v71_build"
+          PROJECT_DIR="$(find "$GITHUB_WORKSPACE/cpd_v71_build" -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit | xargs -r dirname)"
+          test -n "$PROJECT_DIR" || { echo "ERROR: settings.gradle not found"; find "$GITHUB_WORKSPACE/cpd_v71_build" -maxdepth 4 -type f -print; exit 1; }
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "PROJECT_DIR=$PROJECT_DIR"
+
+      - name: 5 - Repair V7.1 Java source compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$PROJECT_DIR" <<'PY'
+          import pathlib, re, sys
+          root = pathlib.Path(sys.argv[1])
+
+          # Make the Java sources self-contained for the Android compiler.
+          for p in root.rglob('*.java'):
+              s = p.read_text(encoding='utf-8')
+              original = s
+
+              if re.search(r'\b(?:JSONObject|JSONArray)\b', s) and not re.search(r'^import org\.json\.\*;', s, re.M):
+                  s = re.sub(r'^(package [^;]+;\n)', r'\1\nimport org.json.*;\n', s, count=1)
+
+              if re.search(r'\b(?:IOException|InputStream|OutputStream|BufferedReader|InputStreamReader)\b', s) and not re.search(r'^import java\.io\.\*;', s, re.M):
+                  s = re.sub(r'^(package [^;]+;\n)', r'\1\nimport java.io.*;\n', s, count=1)
+
+              if re.search(r'\b(?:URL|HttpURLConnection|URLEncoder)\b', s) and not re.search(r'^import java\.net\.\*;', s, re.M):
+                  s = re.sub(r'^(package [^;]+;\n)', r'\1\nimport java.net.*;\n', s, count=1)
+
+              if re.search(r'\bStandardCharsets\b', s) and not re.search(r'^import java\.nio\.charset\.StandardCharsets;', s, re.M):
+                  s = re.sub(r'^(package [^;]+;\n)', r'\1\nimport java.nio.charset.StandardCharsets;\n', s, count=1)
+
+              if s != original:
+                  p.write_text(s, encoding='utf-8')
+
+          # Fix Java field-initializer forward/self references in MainActivity.
+          mp = root / 'app/src/main/java/com/pepestone/app/MainActivity.java'
+          if mp.exists():
+              s = mp.read_text(encoding='utf-8')
+              old_block = """  private final Handler bridgeHandler=new Handler(Looper.getMainLooper()); private final Handler normalHandler=new Handler(Looper.getMainLooper());
+  private final Runnable bridgeRefresh=()->{refreshBridgeStatus();refreshAccountPanels();bridgeHandler.postDelayed(bridgeRefresh,5000);};
+  private final Runnable normalLoop=()->{if(normalOn){scanNormal();normalHandler.postDelayed(normalLoop,30000);}};"""
+              new_block = """  private final Handler bridgeHandler=new Handler(Looper.getMainLooper()); private final Handler normalHandler=new Handler(Looper.getMainLooper());
+  private Runnable bridgeRefresh;
+  private Runnable normalLoop;"""
+              if old_block in s:
+                  s=s.replace(old_block,new_block)
+              marker2='  @Override public void onCreate(Bundle b){super.onCreate(b);prefs=getSharedPreferences("cpd_bridge",MODE_PRIVATE);loadBridgeConfig();loadAggressiveConfig();'
+              repl='  @Override public void onCreate(Bundle b){super.onCreate(b);prefs=getSharedPreferences("cpd_bridge",MODE_PRIVATE);bridgeRefresh=()->{refreshBridgeStatus();refreshAccountPanels();bridgeHandler.postDelayed(bridgeRefresh,5000);};normalLoop=()->{if(normalOn){scanNormal();normalHandler.postDelayed(normalLoop,30000);}};loadBridgeConfig();loadAggressiveConfig();'
+              if marker2 in s:
+                  s=s.replace(marker2,repl)
+              mp.write_text(s,encoding='utf-8')
+
+          # Fix duplicate local variable name in CPDScannerEngine.
+          cp = root / 'app/src/main/java/com/pepestone/app/CPDScannerEngine.java'
+          if cp.exists():
+              s=cp.read_text(encoding='utf-8')
+              s=s.replace('double a5=StrategyEngine.atr(m5,14), px=m5.get(m5.size()-2).c; out.atrPercent=(a5>0&&px>0)?a5/px*100.0:0;', 'double a5=StrategyEngine.atr(m5,14), lastPx=m5.get(m5.size()-2).c; out.atrPercent=(a5>0&&lastPx>0)?a5/lastPx*100.0:0;')
+              cp.write_text(s,encoding='utf-8')
+
+          # Expose the strategy model fields/methods to all CPD strategy helpers.
+          sp = root / 'app/src/main/java/com/pepestone/app/StrategyEngine.java'
+          if sp.exists():
+              s = sp.read_text(encoding='utf-8')
+              s = s.replace('    double o,h,l,c; long v; String t;', '    public double o,h,l,c; public long v; public String t;')
+              s = s.replace('    Candle(JSONObject x){', '    public Candle(JSONObject x){')
+              s = s.replace('    boolean valid; int dir; double confidence,entry,sl,tp,atr;', '    public boolean valid; public int dir; public double confidence,entry,sl,tp,atr;')
+              s = s.replace('    double tp1,tp2,tp3,tp4;', '    public double tp1,tp2,tp3,tp4;')
+              s = s.replace('    String reason="", pattern="NONE", patternQuality="NONE", sr="NONE", srQuality="NONE", breakout="NONE";', '    public String reason="", pattern="NONE", patternQuality="NONE", sr="NONE", srQuality="NONE", breakout="NONE";')
+              s = s.replace('    String symbol; boolean tvConfirmed,newsRisk,vixRisk; double vix;', '    public String symbol; public boolean tvConfirmed,newsRisk,vixRisk; public double vix;')
+              s = s.replace('    Signal(String s){symbol=s;}', '    public Signal(String s){symbol=s;}')
+              for name in ('ema','atr','rsi','bullSweep','bearSweep','structure','disp','fastTrigger','momentum','extension'):
+                  s = re.sub(r'(?m)^  static (double|boolean|int) '+name+r'\(', r'  public static \1 '+name+'(', s)
+              sp.write_text(s, encoding='utf-8')
+
+          # Compile against Java 17 explicitly.
+          gb = root / 'app/build.gradle'
+          s = gb.read_text(encoding='utf-8')
+          if 'compileOptions' not in s:
+              s += '''\n\nandroid {\n    compileOptions {\n        sourceCompatibility JavaVersion.VERSION_17\n        targetCompatibility JavaVersion.VERSION_17\n    }\n}\n'''
+          gb.write_text(s, encoding='utf-8')
+
+          gp = root / 'gradle.properties'
+          if not gp.exists(): gp.write_text('', encoding='utf-8')
+          with gp.open('a', encoding='utf-8') as f:
+              f.write('\nandroid.suppressUnsupportedCompileSdk=35\n')
+          print('V7.1 source compatibility repair complete.')
+          PY
+
+      - name: 6 - Set up Gradle 8.10.2
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.10.2'
+          cache-provider: basic
+
+      - name: 7 - Build APK
+        shell: bash
+        run: |
+          set -o pipefail
+          cd "$PROJECT_DIR"
+          gradle clean :app:assembleDebug --no-daemon --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: 8 - Find APK
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_PATH="$(find "$PROJECT_DIR" -type f -path '*/build/outputs/apk/debug/*.apk' -print -quit)"
+          test -n "$APK_PATH" || { echo "ERROR: No APK produced"; find "$PROJECT_DIR" -type f -name '*.apk' -print; exit 1; }
+          cp "$APK_PATH" "$GITHUB_WORKSPACE/CPD-SUPER-WIZARD-AI-V7.1.apk"
+          echo "APK READY: $GITHUB_WORKSPACE/CPD-SUPER-WIZARD-AI-V7.1.apk"
+
+      - name: 9 - Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CPD-SUPER-WIZARD-AI-V7.1
+          path: CPD-SUPER-WIZARD-AI-V7.1.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: 10 - Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CPD-V7.1-build-log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 7
