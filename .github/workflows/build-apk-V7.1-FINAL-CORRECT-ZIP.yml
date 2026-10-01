@@ -1,0 +1,157 @@
+name: Build C.P.D SUPER WIZARD AI V7.1 FINAL
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: 1 - Check out source
+        uses: actions/checkout@v4
+
+      - name: 2 - Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 3 - Prepare Android SDK
+        shell: bash
+        run: |
+          set -e
+
+          ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_HOME
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
+
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager || true)"
+          fi
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager was not found."
+            exit 1
+          fi
+
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: 4 - Verify Android SDK
+        shell: bash
+        run: |
+          set -e
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME/platforms/android-35"
+          test -d "$ANDROID_HOME/build-tools/35.0.0"
+          echo "Android SDK is ready."
+
+      - name: 5 - Prepare NEW V7.1 ZIP
+        shell: bash
+        run: |
+          set -e
+
+          ZIP_NAME="CPD_SUPER_WIZARD_AI_V7_1_PREMIUM_DEMO_LIVE_LESSONS_ONLY_LINE_FIX.zip"
+
+          echo "Looking for NEW ZIP:"
+          echo "$ZIP_NAME"
+
+          ZIP_FILE="$(find "$GITHUB_WORKSPACE" -type f -name "$ZIP_NAME" -print -quit)"
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: The NEW V7.1 ZIP was not found."
+            echo "Expected:"
+            echo "$ZIP_NAME"
+            echo ""
+            echo "ZIP files actually found:"
+            find "$GITHUB_WORKSPACE" -type f -name '*.zip' -print || true
+            exit 1
+          fi
+
+          echo "FOUND NEW ZIP:"
+          echo "$ZIP_FILE"
+
+          rm -rf "$GITHUB_WORKSPACE/v7_build"
+          mkdir -p "$GITHUB_WORKSPACE/v7_build"
+
+          unzip -q "$ZIP_FILE" -d "$GITHUB_WORKSPACE/v7_build"
+
+          PROJECT_DIR="$(find "$GITHUB_WORKSPACE/v7_build" -type f -name gradlew -print -quit | xargs -r dirname)"
+
+          if [ -z "$PROJECT_DIR" ] || [ ! -f "$PROJECT_DIR/gradlew" ]; then
+            echo "ERROR: No Gradle project was found inside the NEW V7.1 ZIP."
+            exit 1
+          fi
+
+          chmod +x "$PROJECT_DIR/gradlew"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Using project:"
+          echo "$PROJECT_DIR"
+
+      - name: 6 - Repair Java imports
+        shell: bash
+        run: |
+          set -e
+
+          MAIN_ACTIVITY="$(find "$PROJECT_DIR" -type f -name MainActivity.java -print -quit)"
+
+          if [ -z "$MAIN_ACTIVITY" ]; then
+            echo "ERROR: MainActivity.java was not found."
+            exit 1
+          fi
+
+          echo "Checking:"
+          echo "$MAIN_ACTIVITY"
+
+          grep -q '^import org\.json\.JSONObject;' "$MAIN_ACTIVITY" ||             sed -i '/^package /a import org.json.JSONObject;' "$MAIN_ACTIVITY"
+
+          grep -q '^import org\.json\.JSONArray;' "$MAIN_ACTIVITY" ||             sed -i '/^package /a import org.json.JSONArray;' "$MAIN_ACTIVITY"
+
+          PROPERTIES="$PROJECT_DIR/gradle.properties"
+          touch "$PROPERTIES"
+
+          grep -q '^android\.suppressUnsupportedCompileSdk=35$' "$PROPERTIES" ||             printf '\nandroid.suppressUnsupportedCompileSdk=35\n' >> "$PROPERTIES"
+
+          echo "Repair complete."
+
+      - name: 7 - Build APK
+        shell: bash
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+
+          chmod +x ./gradlew
+
+          ./gradlew clean assembleDebug --no-daemon --stacktrace --console=plain
+
+      - name: 8 - Find APK
+        shell: bash
+        run: |
+          set -e
+
+          APK="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -type f -name '*.apk' -print -quit)"
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not produced."
+            find "$PROJECT_DIR/app/build/outputs" -type f -print 2>/dev/null || true
+            exit 1
+          fi
+
+          cp "$APK" "$GITHUB_WORKSPACE/CPD-SUPER-WIZARD-AI-V7.1.apk"
+
+          echo "APK created successfully:"
+          ls -lh "$GITHUB_WORKSPACE/CPD-SUPER-WIZARD-AI-V7.1.apk"
+
+      - name: 9 - Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CPD-SUPER-WIZARD-AI-V7.1
+          path: CPD-SUPER-WIZARD-AI-V7.1.apk
+          if-no-files-found: error
