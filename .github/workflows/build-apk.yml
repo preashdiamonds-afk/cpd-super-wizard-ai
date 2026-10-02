@@ -23,9 +23,20 @@ jobs:
           gradle-version: '8.9'
 
       - name: Install Android SDK components
-        run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+  run: |
+    SDKMANAGER=$(find /usr/local/lib/android/sdk -type f -name sdkmanager | head -n 1)
+
+    if [ -z "$SDKMANAGER" ]; then
+      echo "sdkmanager was not found."
+      exit 1
+    fi
+
+    echo "Using sdkmanager: $SDKMANAGER"
+    yes | "$SDKMANAGER" --licenses >/dev/null || true
+    "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+        
+          
+        
 
       - name: Find V7.2 source ZIP
         run: |
