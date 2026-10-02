@@ -29,7 +29,7 @@ jobs:
 
       - name: Find V7.2 source ZIP
         run: |
-          ZIP_FILE=$(find . -maxdepth 1 -type f -name 'CPD_SUPER_WIZARD_AI_V7_2_REAL_EXNESS_EXECUTION_CORE_FINAL.zip' | head -n 1)
+          ZIP_FILE=$(find . -maxdepth 1 -type f -name 'CPD_SUPER_WIZARD_AI_V7_2_CLEAN_CLOUD_PROJECT.zip' | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
             echo "V7.2 source ZIP was not found."
