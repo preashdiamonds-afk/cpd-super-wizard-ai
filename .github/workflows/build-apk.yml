@@ -65,9 +65,14 @@ jobs:
 
           if [ -z "$ZIP_FILE" ]; then
             echo "::error::CPD_SUPER_WIZARD_AI_V7_6_BALANCED_NO_OVERFIT.zip was not found."
+
             echo ""
             echo "Files currently in repository root:"
-            find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -printf '%f\n' | sort
+            find "$GITHUB_WORKSPACE" \
+              -maxdepth 1 \
+              -type f \
+              -printf '%f\n' | sort
+
             exit 1
           fi
 
@@ -136,6 +141,33 @@ jobs:
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Enable AndroidX
+        shell: bash
+        run: |
+          set -e
+
+          echo "Configuring AndroidX..."
+
+          PROPERTIES_FILE="$PROJECT_DIR/gradle.properties"
+
+          touch "$PROPERTIES_FILE"
+
+          if grep -q '^android\.useAndroidX=' "$PROPERTIES_FILE"; then
+            sed -i 's/^android\.useAndroidX=.*/android.useAndroidX=true/' "$PROPERTIES_FILE"
+          else
+            echo "android.useAndroidX=true" >> "$PROPERTIES_FILE"
+          fi
+
+          if grep -q '^android\.enableJetifier=' "$PROPERTIES_FILE"; then
+            sed -i 's/^android\.enableJetifier=.*/android.enableJetifier=true/' "$PROPERTIES_FILE"
+          else
+            echo "android.enableJetifier=true" >> "$PROPERTIES_FILE"
+          fi
+
+          echo ""
+          echo "gradle.properties:"
+          cat "$PROPERTIES_FILE"
 
       - name: Show project structure
         working-directory: ${{ env.PROJECT_DIR }}
