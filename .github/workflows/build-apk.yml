@@ -9,12 +9,14 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -24,13 +26,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Check Android SDK
+      - name: Prepare Android SDK
         shell: bash
         run: |
           set -e
 
           echo "ANDROID_HOME=$ANDROID_HOME"
-          ls -la "$ANDROID_HOME"
 
           if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
             SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -39,7 +40,7 @@ jobs:
           fi
 
           if [ -n "$SDKMANAGER" ]; then
-            echo "Using sdkmanager: $SDKMANAGER"
+            echo "Using SDK manager: $SDKMANAGER"
 
             yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
 
@@ -49,7 +50,7 @@ jobs:
               "build-tools;35.0.0"
           else
             echo "sdkmanager not found."
-            echo "Using packages already installed on the runner."
+            echo "Using runner-installed Android SDK packages."
           fi
 
       - name: Find V7.6 ZIP
@@ -64,19 +65,20 @@ jobs:
             -print -quit)"
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "::error::CPD_SUPER_WIZARD_AI_V7_6_BALANCED_NO_OVERFIT.zip was not found."
+            echo "::error::V7.6 ZIP was not found."
 
             echo ""
-            echo "Files currently in repository root:"
+            echo "ZIP files found:"
             find "$GITHUB_WORKSPACE" \
               -maxdepth 1 \
               -type f \
+              -name "*.zip" \
               -printf '%f\n' | sort
 
             exit 1
           fi
 
-          echo "Found source ZIP:"
+          echo "SOURCE ZIP:"
           echo "$ZIP_FILE"
 
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
@@ -86,24 +88,25 @@ jobs:
         run: |
           set -e
 
-          echo "Testing ZIP integrity..."
+          echo "Checking ZIP integrity..."
+
           unzip -tq "$ZIP_FILE"
 
-          echo "ZIP integrity check PASSED."
+          echo "ZIP INTEGRITY: PASS"
 
       - name: Extract V7.6 source
         shell: bash
         run: |
           set -e
 
-          rm -rf "$RUNNER_TEMP/cpd_source"
-          mkdir -p "$RUNNER_TEMP/cpd_source"
+          rm -rf "$RUNNER_TEMP/cpd_v76"
+          mkdir -p "$RUNNER_TEMP/cpd_v76"
 
-          unzip -q "$ZIP_FILE" -d "$RUNNER_TEMP/cpd_source"
+          unzip -oq "$ZIP_FILE" -d "$RUNNER_TEMP/cpd_v76"
 
-          echo "Source extracted successfully."
+          echo "V7.6 source extracted."
 
-      - name: Find Android Gradle project
+      - name: Find Android project
         shell: bash
         run: |
           set -e
@@ -111,6 +114,7 @@ jobs:
           PROJECT_DIR=""
 
           while IFS= read -r SETTINGS_FILE; do
+
             CANDIDATE="$(dirname "$SETTINGS_FILE")"
 
             if [ -f "$CANDIDATE/app/build.gradle" ] || \
@@ -118,72 +122,74 @@ jobs:
 
               PROJECT_DIR="$CANDIDATE"
               break
+
             fi
+
           done < <(
-            find "$RUNNER_TEMP/cpd_source" \
+            find "$RUNNER_TEMP/cpd_v76" \
               -type f \
-              \( -name settings.gradle -o -name settings.gradle.kts \)
+              \( \
+                -name "settings.gradle" \
+                -o \
+                -name "settings.gradle.kts" \
+              \)
           )
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "::error::No Android Gradle project was found inside the V7.6 ZIP."
 
-            echo ""
-            echo "Source files found:"
-            find "$RUNNER_TEMP/cpd_source" \
+            echo "::error::Android Gradle project not found."
+
+            find "$RUNNER_TEMP/cpd_v76" \
               -maxdepth 6 \
               -type f | sort | head -300
 
             exit 1
           fi
 
-          echo "Android project found:"
+          echo "ANDROID PROJECT:"
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Enable AndroidX
+      - name: Force AndroidX configuration
         shell: bash
         run: |
           set -e
 
+          PROPERTIES="$PROJECT_DIR/gradle.properties"
+
+          touch "$PROPERTIES"
+
+          echo ""
           echo "Configuring AndroidX..."
 
-          PROPERTIES_FILE="$PROJECT_DIR/gradle.properties"
-
-          touch "$PROPERTIES_FILE"
-
-          if grep -q '^android\.useAndroidX=' "$PROPERTIES_FILE"; then
-            sed -i 's/^android\.useAndroidX=.*/android.useAndroidX=true/' "$PROPERTIES_FILE"
+          if grep -q '^android.useAndroidX=' "$PROPERTIES"; then
+            sed -i \
+              's/^android.useAndroidX=.*/android.useAndroidX=true/' \
+              "$PROPERTIES"
           else
-            echo "android.useAndroidX=true" >> "$PROPERTIES_FILE"
+            echo "android.useAndroidX=true" >> "$PROPERTIES"
           fi
 
-          if grep -q '^android\.enableJetifier=' "$PROPERTIES_FILE"; then
-            sed -i 's/^android\.enableJetifier=.*/android.enableJetifier=true/' "$PROPERTIES_FILE"
+          if grep -q '^android.enableJetifier=' "$PROPERTIES"; then
+            sed -i \
+              's/^android.enableJetifier=.*/android.enableJetifier=true/' \
+              "$PROPERTIES"
           else
-            echo "android.enableJetifier=true" >> "$PROPERTIES_FILE"
+            echo "android.enableJetifier=true" >> "$PROPERTIES"
           fi
 
           echo ""
-          echo "gradle.properties:"
-          cat "$PROPERTIES_FILE"
-
-      - name: Show project structure
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
-        run: |
-          echo "Project directory:"
-          pwd
+          echo "FINAL gradle.properties:"
+          cat "$PROPERTIES"
 
           echo ""
-          echo "Important project files:"
-          find . -maxdepth 3 -type f \
-            \( -name "*.gradle" \
-            -o -name "*.gradle.kts" \
-            -o -name "AndroidManifest.xml" \
-            -o -name "proguard-rules.pro" \) \
-            -print | sort
+          echo "Checking AndroidX configuration..."
+
+          grep -q '^android.useAndroidX=true$' "$PROPERTIES"
+          grep -q '^android.enableJetifier=true$' "$PROPERTIES"
+
+          echo "ANDROIDX CONFIGURATION: PASS"
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v6
@@ -200,36 +206,59 @@ jobs:
 
           echo "Android SDK configured."
 
-      - name: Build V7.6 Debug APK
+      - name: Verify Gradle AndroidX properties
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -e
 
-          echo "Building C.P.D SUPER WIZARD AI V7.6..."
+          echo "Gradle project:"
+          pwd
 
-          gradle clean assembleDebug \
+          echo ""
+          echo "AndroidX properties:"
+          grep 'android.useAndroidX' gradle.properties
+          grep 'android.enableJetifier' gradle.properties
+
+          echo ""
+          echo "Gradle version:"
+          gradle --version
+
+      - name: Build V7.6 Debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -o pipefail
+
+          echo "=========================================="
+          echo " BUILDING C.P.D SUPER WIZARD AI V7.6"
+          echo "=========================================="
+
+          gradle \
+            -Pandroid.useAndroidX=true \
+            -Pandroid.enableJetifier=true \
+            clean \
+            :app:assembleDebug \
             --no-daemon \
+            --console=plain \
             --stacktrace \
-            --warning-mode all
+            --warning-mode all \
+            2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
-          echo "BUILD COMPLETED."
-
-      - name: Find generated APK
+      - name: Find APK
+        if: success()
         shell: bash
         run: |
           set -e
 
-          APK="$(find "$PROJECT_DIR" \
+          APK_PATH="$(find "$PROJECT_DIR" \
             -type f \
             -path '*/build/outputs/apk/debug/*.apk' \
             -print -quit)"
 
-          if [ -z "$APK" ]; then
+          if [ -z "$APK_PATH" ]; then
             echo "::error::APK was not produced."
 
-            echo ""
-            echo "Searching for APK files:"
             find "$PROJECT_DIR" \
               -type f \
               -name "*.apk" \
@@ -238,28 +267,28 @@ jobs:
             exit 1
           fi
 
-          echo "APK found:"
-          echo "$APK"
+          echo "APK FOUND:"
+          echo "$APK_PATH"
 
           mkdir -p "$GITHUB_WORKSPACE/final-apk"
 
-          cp "$APK" \
+          cp "$APK_PATH" \
             "$GITHUB_WORKSPACE/final-apk/CPD_SUPER_WIZARD_AI_V7_6_BALANCED.apk"
 
-      - name: Upload APK artifact
+      - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: CPD-SUPER-WIZARD-AI-V7.6-APK
           path: final-apk/CPD_SUPER_WIZARD_AI_V7_6_BALANCED.apk
           if-no-files-found: error
+          retention-days: 7
 
-      - name: Build summary
-        shell: bash
-        run: |
-          echo "======================================"
-          echo " C.P.D SUPER WIZARD AI V7.6"
-          echo " BUILD SUCCESSFUL"
-          echo "======================================"
-          echo ""
-          echo "APK:"
-          ls -lh final-apk/
+      - name: Upload build log if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CPD-V7.6-BUILD-LOG
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 7
