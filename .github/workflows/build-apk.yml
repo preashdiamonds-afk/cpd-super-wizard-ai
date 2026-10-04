@@ -73,7 +73,7 @@ jobs:
             exit 1
           fi
 
-          echo "Found:"
+          echo "Found V7.6 ZIP:"
           echo "$ZIP_FILE"
 
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
@@ -222,12 +222,14 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
-          set -o pipefail
+          set +e
 
           echo "=========================================="
           echo " C.P.D SUPER WIZARD AI V7.6"
           echo " BUILD STARTING"
           echo "=========================================="
+
+          LOG_FILE="$GITHUB_WORKSPACE/build.log"
 
           gradle \
             -Pandroid.useAndroidX=true \
@@ -238,7 +240,43 @@ jobs:
             --console=plain \
             --stacktrace \
             --warning-mode all \
-            2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+            > "$LOG_FILE" 2>&1
+
+          BUILD_STATUS=$?
+
+          echo ""
+          echo "=========================================="
+          echo " COMPILER ERROR REPORT"
+          echo "=========================================="
+
+          if [ "$BUILD_STATUS" -ne 0 ]; then
+            echo ""
+            echo "Build failed with exit code: $BUILD_STATUS"
+            echo ""
+
+            echo "----- Java/compiler errors -----"
+
+            grep -n -E \
+              'error:|error |cannot find symbol|symbol:|location:|Compilation failed|FAILED' \
+              "$LOG_FILE" \
+              | head -n 150 || true
+
+            echo ""
+            echo "----- Last 150 lines of build log -----"
+            tail -n 150 "$LOG_FILE"
+
+            echo ""
+            echo "=========================================="
+            echo " BUILD FAILED"
+            echo "=========================================="
+
+            exit "$BUILD_STATUS"
+          fi
+
+          echo ""
+          echo "=========================================="
+          echo " BUILD COMPLETED"
+          echo "=========================================="
 
       - name: Find APK
         if: success()
@@ -290,4 +328,5 @@ jobs:
           echo " C.P.D SUPER WIZARD AI V7.6"
           echo " BUILD SUCCESSFUL"
           echo "======================================"
+
           ls -lh final-apk/
