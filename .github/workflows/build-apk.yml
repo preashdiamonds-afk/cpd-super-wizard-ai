@@ -1,4 +1,4 @@
-name: Build C.P.D SUPER WIZARD AI V7.2
+name: Build C.P.D SUPER WIZARD AI V7.6
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Check Android SDK
         shell: bash
@@ -30,12 +30,7 @@ jobs:
           set -e
 
           echo "ANDROID_HOME=$ANDROID_HOME"
-          ls -la "$ANDROID_HOME" || true
-
-          if [ ! -d "$ANDROID_HOME" ]; then
-            echo "::error::Android SDK was not found."
-            exit 1
-          fi
+          ls -la "$ANDROID_HOME"
 
           if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
             SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -45,17 +40,19 @@ jobs:
 
           if [ -n "$SDKMANAGER" ]; then
             echo "Using sdkmanager: $SDKMANAGER"
+
             yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+
             "$SDKMANAGER" \
               "platform-tools" \
               "platforms;android-35" \
               "build-tools;35.0.0"
           else
             echo "sdkmanager not found."
-            echo "Using Android SDK packages already installed."
+            echo "Using packages already installed on the runner."
           fi
 
-      - name: Find V7.2 source ZIP
+      - name: Find V7.6 ZIP
         shell: bash
         run: |
           set -e
@@ -63,31 +60,33 @@ jobs:
           ZIP_FILE="$(find "$GITHUB_WORKSPACE" \
             -maxdepth 1 \
             -type f \
-            -name 'CPD_SUPER_WIZARD_AI_V7_2_ADAPTIVE_REGIME_STEP1.zip' \
+            -name 'CPD_SUPER_WIZARD_AI_V7_6_BALANCED_NO_OVERFIT.zip' \
             -print -quit)"
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "::error::Step 1 ZIP was not found."
-            echo "Files in repository root:"
-            find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -print
+            echo "::error::CPD_SUPER_WIZARD_AI_V7_6_BALANCED_NO_OVERFIT.zip was not found."
+            echo ""
+            echo "Files currently in repository root:"
+            find "$GITHUB_WORKSPACE" -maxdepth 1 -type f -printf '%f\n' | sort
             exit 1
           fi
 
-          echo "Using source ZIP:"
+          echo "Found source ZIP:"
           echo "$ZIP_FILE"
 
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
-      - name: Validate source ZIP
+      - name: Validate ZIP
         shell: bash
         run: |
           set -e
 
+          echo "Testing ZIP integrity..."
           unzip -tq "$ZIP_FILE"
 
-          echo "ZIP validation successful."
+          echo "ZIP integrity check PASSED."
 
-      - name: Extract source
+      - name: Extract V7.6 source
         shell: bash
         run: |
           set -e
@@ -99,7 +98,7 @@ jobs:
 
           echo "Source extracted successfully."
 
-      - name: Locate Android project
+      - name: Find Android Gradle project
         shell: bash
         run: |
           set -e
@@ -115,7 +114,6 @@ jobs:
               PROJECT_DIR="$CANDIDATE"
               break
             fi
-
           done < <(
             find "$RUNNER_TEMP/cpd_source" \
               -type f \
@@ -123,13 +121,13 @@ jobs:
           )
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "::error::No Android Gradle project was found."
+            echo "::error::No Android Gradle project was found inside the V7.6 ZIP."
 
+            echo ""
+            echo "Source files found:"
             find "$RUNNER_TEMP/cpd_source" \
               -maxdepth 6 \
-              -type f \
-              | sort \
-              | head -200
+              -type f | sort | head -300
 
             exit 1
           fi
@@ -139,10 +137,26 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
+      - name: Show project structure
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          echo "Project directory:"
+          pwd
+
+          echo ""
+          echo "Important project files:"
+          find . -maxdepth 3 -type f \
+            \( -name "*.gradle" \
+            -o -name "*.gradle.kts" \
+            -o -name "AndroidManifest.xml" \
+            -o -name "proguard-rules.pro" \) \
+            -print | sort
+
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: '8.9'
+          gradle-version: "8.9"
 
       - name: Configure Android SDK
         shell: bash
@@ -154,20 +168,22 @@ jobs:
 
           echo "Android SDK configured."
 
-      - name: Build Debug APK
+      - name: Build V7.6 Debug APK
         working-directory: ${{ env.PROJECT_DIR }}
         shell: bash
         run: |
           set -e
 
-          gradle \
-            clean \
-            assembleDebug \
+          echo "Building C.P.D SUPER WIZARD AI V7.6..."
+
+          gradle clean assembleDebug \
             --no-daemon \
             --stacktrace \
             --warning-mode all
 
-      - name: Find APK
+          echo "BUILD COMPLETED."
+
+      - name: Find generated APK
         shell: bash
         run: |
           set -e
@@ -180,25 +196,38 @@ jobs:
           if [ -z "$APK" ]; then
             echo "::error::APK was not produced."
 
+            echo ""
+            echo "Searching for APK files:"
             find "$PROJECT_DIR" \
               -type f \
-              | grep -E '\.apk$|build/outputs' \
-              || true
+              -name "*.apk" \
+              -print || true
 
             exit 1
           fi
 
-          echo "APK successfully created:"
+          echo "APK found:"
           echo "$APK"
 
           mkdir -p "$GITHUB_WORKSPACE/final-apk"
 
           cp "$APK" \
-            "$GITHUB_WORKSPACE/final-apk/CPD_SUPER_WIZARD_AI_V7.2_ADAPTIVE_REGIME.apk"
+            "$GITHUB_WORKSPACE/final-apk/CPD_SUPER_WIZARD_AI_V7_6_BALANCED.apk"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CPD-SUPER-WIZARD-AI-V7.2-ADAPTIVE-REGIME-APK
-          path: final-apk/CPD_SUPER_WIZARD_AI_V7.2_ADAPTIVE_REGIME.apk
+          name: CPD-SUPER-WIZARD-AI-V7.6-APK
+          path: final-apk/CPD_SUPER_WIZARD_AI_V7_6_BALANCED.apk
           if-no-files-found: error
+
+      - name: Build summary
+        shell: bash
+        run: |
+          echo "======================================"
+          echo " C.P.D SUPER WIZARD AI V7.6"
+          echo " BUILD SUCCESSFUL"
+          echo "======================================"
+          echo ""
+          echo "APK:"
+          ls -lh final-apk/
