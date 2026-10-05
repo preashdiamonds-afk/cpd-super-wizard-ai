@@ -7,176 +7,221 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build-v7-6:
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
-
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
 
+      # ------------------------------------------------------------
+      # 1. Checkout repository
+      # ------------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ------------------------------------------------------------
+      # 2. Java 17
+      # ------------------------------------------------------------
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
-      - name: Prepare Android SDK
+      # ------------------------------------------------------------
+      # 3. Android SDK
+      # ------------------------------------------------------------
+      - name: Set up Android SDK
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
-            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          else
-            SDKMANAGER="$(find "$ANDROID_HOME" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
-          fi
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
 
-          if [ -n "$SDKMANAGER" ]; then
-            yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-
-            "$SDKMANAGER" \
-              "platform-tools" \
-              "platforms;android-35" \
-              "build-tools;35.0.0"
-          else
-            echo "sdkmanager not found."
-            echo "Using installed Android SDK packages."
-          fi
-
-      - name: Find V7.6 ZIP
-        shell: bash
-        run: |
-          set -e
-
-          ZIP_FILE="$(find "$GITHUB_WORKSPACE" \
-            -maxdepth 1 \
+          SDKMANAGER="$(find "$SDK_ROOT" \
             -type f \
-            -name 'CPD_SUPER_WIZARD_AI_V7_6_BALANCED_NO_OVERFIT.zip' \
-            -print -quit)"
+            -name sdkmanager \
+            -print \
+            -quit 2>/dev/null || true)"
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "::error::V7.6 ZIP was not found."
-
-            echo "ZIP files found:"
-            find "$GITHUB_WORKSPACE" \
-              -maxdepth 1 \
-              -type f \
-              -name "*.zip" \
-              -printf '%f\n' | sort
-
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: Android sdkmanager not found."
             exit 1
           fi
 
-          echo "Found V7.6 ZIP:"
-          echo "$ZIP_FILE"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
 
-          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
 
-      - name: Validate ZIP
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      # ------------------------------------------------------------
+      # 4. Gradle 8.9
+      # ------------------------------------------------------------
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.9'
+
+      # ------------------------------------------------------------
+      # 5. Locate the ORIGINAL V7.6 master ZIP
+      #
+      # IMPORTANT:
+      # The original ZIP is never modified.
+      # ------------------------------------------------------------
+      - name: Locate V7.6 master ZIP
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          unzip -tq "$ZIP_FILE"
+          ZIP_FILE=""
 
-          echo "ZIP integrity: PASS"
+          while IFS= read -r candidate; do
+            ZIP_FILE="$candidate"
+            break
+          done < <(
+            find "$GITHUB_WORKSPACE" \
+              -type f \
+              -name 'CPD_SUPER_WIZARD_AI_V7_6_BALANCED_NO_OVERFIT.zip' \
+              -not -path '*/.git/*' \
+              -print
+          )
 
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: V7.6 master ZIP was not found."
+            echo
+            echo "Expected exact filename:"
+            echo "CPD_SUPER_WIZARD_AI_V7_6_BALANCED_NO_OVERFIT.zip"
+            echo
+            echo "Upload that ZIP to the repository and run the workflow again."
+            exit 1
+          fi
+
+          echo "Found V7.6 master ZIP:"
+          echo "$ZIP_FILE"
+
+          unzip -t "$ZIP_FILE" >/dev/null
+
+          echo "MASTER_ZIP=$ZIP_FILE" >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------
+      # 6. Extract V7.6 into a temporary build directory
+      # ------------------------------------------------------------
       - name: Extract V7.6 source
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          rm -rf "$RUNNER_TEMP/cpd_v76"
-          mkdir -p "$RUNNER_TEMP/cpd_v76"
+          rm -rf "$GITHUB_WORKSPACE/v7_6_build"
+          mkdir -p "$GITHUB_WORKSPACE/v7_6_build"
 
-          unzip -oq "$ZIP_FILE" -d "$RUNNER_TEMP/cpd_v76"
+          unzip -oq "$MASTER_ZIP" \
+            -d "$GITHUB_WORKSPACE/v7_6_build"
 
-          echo "V7.6 source extracted."
+          echo "Searching for Gradle project..."
 
-      - name: Find Android project
-        shell: bash
-        run: |
-          set -e
-
-          PROJECT_DIR=""
-
-          while IFS= read -r SETTINGS_FILE; do
-            CANDIDATE="$(dirname "$SETTINGS_FILE")"
-
-            if [ -f "$CANDIDATE/app/build.gradle" ] || \
-               [ -f "$CANDIDATE/app/build.gradle.kts" ]; then
-              PROJECT_DIR="$CANDIDATE"
-              break
-            fi
-          done < <(
-            find "$RUNNER_TEMP/cpd_v76" \
+          PROJECT_DIR="$(
+            find "$GITHUB_WORKSPACE/v7_6_build" \
               -type f \
-              \( \
-                -name "settings.gradle" \
-                -o \
-                -name "settings.gradle.kts" \
-              \)
-          )
+              -name 'settings.gradle' \
+              -print \
+              -quit
+          )"
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "::error::Android Gradle project not found."
+            echo "ERROR: settings.gradle was not found inside the V7.6 ZIP."
             exit 1
           fi
 
-          echo "Android project:"
+          PROJECT_DIR="$(dirname "$PROJECT_DIR")"
+
+          test -f "$PROJECT_DIR/settings.gradle"
+          test -f "$PROJECT_DIR/build.gradle"
+          test -f "$PROJECT_DIR/app/build.gradle"
+
+          echo "V7.6 project directory:"
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Enable AndroidX
+      # ------------------------------------------------------------
+      # 7. Verify this is really the V7.6 project
+      # ------------------------------------------------------------
+      - name: Verify V7.6 source contents
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
+
+          echo "Checking required V7.6 components..."
+
+          test -f "$PROJECT_DIR/app/src/main/java/com/pepestone/app/CPDScannerEngine.java"
+          test -f "$PROJECT_DIR/app/src/main/java/com/pepestone/app/TradingController.java"
+          test -f "$PROJECT_DIR/app/src/main/java/com/pepestone/app/ExnessMt5Client.java"
+          test -f "$PROJECT_DIR/app/src/main/java/com/pepestone/app/BrokerApiClient.java"
+          test -f "$PROJECT_DIR/mt5/CPD_SUPER_WIZARD_AI_BRIDGE.mq5"
+          test -f "$PROJECT_DIR/bridge_server/server.py"
+
+          echo "Required V7.6 trading/MT5/scanner files are present."
+
+          echo
+          echo "V7.6 documentation:"
+          test -f "$PROJECT_DIR/V7_6_BALANCED_NO_OVERFIT.md" && \
+            echo "  V7_6_BALANCED_NO_OVERFIT.md: OK" || true
+
+          test -f "$PROJECT_DIR/V7_6_CORRECTIONS.md" && \
+            echo "  V7_6_CORRECTIONS.md: OK" || true
+
+      # ------------------------------------------------------------
+      # 8. Enable AndroidX
+      #
+      # This is a build configuration repair only.
+      # ------------------------------------------------------------
+      - name: Enable AndroidX and Jetifier
+        shell: bash
+        run: |
+          set -euo pipefail
 
           PROPERTIES="$PROJECT_DIR/gradle.properties"
 
           touch "$PROPERTIES"
 
-          if grep -q '^android.useAndroidX=' "$PROPERTIES"; then
-            sed -i \
-              's/^android.useAndroidX=.*/android.useAndroidX=true/' \
-              "$PROPERTIES"
-          else
-            echo "android.useAndroidX=true" >> "$PROPERTIES"
+          if ! grep -q '^android.useAndroidX=true$' "$PROPERTIES"; then
+            echo 'android.useAndroidX=true' >> "$PROPERTIES"
           fi
 
-          if grep -q '^android.enableJetifier=' "$PROPERTIES"; then
-            sed -i \
-              's/^android.enableJetifier=.*/android.enableJetifier=true/' \
-              "$PROPERTIES"
-          else
-            echo "android.enableJetifier=true" >> "$PROPERTIES"
+          if ! grep -q '^android.enableJetifier=true$' "$PROPERTIES"; then
+            echo 'android.enableJetifier=true' >> "$PROPERTIES"
           fi
 
-          echo ""
-          echo "AndroidX configuration:"
-          grep '^android.useAndroidX=' "$PROPERTIES"
-          grep '^android.enableJetifier=' "$PROPERTIES"
+          echo "gradle.properties:"
+          cat "$PROPERTIES"
 
-      - name: Repair CPD Scanner method call
+      # ------------------------------------------------------------
+      # 9. Repair ONLY the known CPDScannerEngine error
+      #
+      # Known bad call:
+      #
+      # return scan(symbol,data,screenshotReceived,null,null);
+      #
+      # Correct V7.6-compatible call:
+      #
+      # return scan(symbol,data,screenshotReceived,null);
+      #
+      # No other Java code is automatically rewritten here.
+      # ------------------------------------------------------------
+      - name: Repair known CPDScannerEngine call
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           SCANNER="$PROJECT_DIR/app/src/main/java/com/pepestone/app/CPDScannerEngine.java"
 
-          if [ ! -f "$SCANNER" ]; then
-            echo "::error::CPDScannerEngine.java was not found."
-            exit 1
-          fi
-
-          echo "Checking CPDScannerEngine.java..."
+          test -f "$SCANNER"
 
           python3 - "$SCANNER" <<'PY'
           import sys
@@ -185,148 +230,144 @@ jobs:
           path = Path(sys.argv[1])
           text = path.read_text(encoding="utf-8")
 
-          old = "return scan(symbol,data,screenshotReceived,null,null);"
-          new = "return scan(symbol,data,screenshotReceived,null);"
+          bad = "return scan(symbol,data,screenshotReceived,null,null);"
+          good = "return scan(symbol,data,screenshotReceived,null);"
 
-          if old in text:
-              text = text.replace(old, new)
+          if bad in text:
+              text = text.replace(bad, good)
               path.write_text(text, encoding="utf-8")
-              print("Scanner method call repaired: PASS")
-          elif new in text:
-              print("Scanner method call already correct: PASS")
+              print("Known CPDScannerEngine call repaired.")
           else:
-              print("The exact 5-argument call was not found.")
-              print("Gradle will verify the scanner source during compilation.")
+              print("Known bad call was not present.")
+              print("No speculative Java modification was made.")
           PY
 
-          echo ""
-          echo "Scanner source check:"
-          grep -n "return scan" "$SCANNER" || true
+          if grep -q \
+            'return scan(symbol,data,screenshotReceived,null,null);' \
+            "$SCANNER"; then
 
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: "8.9"
-
-      - name: Configure Android SDK
-        shell: bash
-        run: |
-          set -e
-
-          printf 'sdk.dir=%s\n' "$ANDROID_HOME" \
-            > "$PROJECT_DIR/local.properties"
-
-          echo "Android SDK configured."
-
-      - name: Build V7.6 Debug APK
-        working-directory: ${{ env.PROJECT_DIR }}
-        shell: bash
-        run: |
-          set +e
-
-          echo "=========================================="
-          echo " C.P.D SUPER WIZARD AI V7.6"
-          echo " BUILD STARTING"
-          echo "=========================================="
-
-          LOG_FILE="$GITHUB_WORKSPACE/build.log"
-
-          gradle \
-            -Pandroid.useAndroidX=true \
-            -Pandroid.enableJetifier=true \
-            clean \
-            :app:assembleDebug \
-            --no-daemon \
-            --console=plain \
-            --stacktrace \
-            --warning-mode all \
-            > "$LOG_FILE" 2>&1
-
-          BUILD_STATUS=$?
-
-          echo ""
-          echo "=========================================="
-          echo " COMPILER ERROR REPORT"
-          echo "=========================================="
-
-          if [ "$BUILD_STATUS" -ne 0 ]; then
-            echo ""
-            echo "Build failed with exit code: $BUILD_STATUS"
-            echo ""
-
-            echo "----- Java/compiler errors -----"
-
-            grep -n -E \
-              'error:|error |cannot find symbol|symbol:|location:|Compilation failed|FAILED' \
-              "$LOG_FILE" \
-              | head -n 150 || true
-
-            echo ""
-            echo "----- Last 150 lines of build log -----"
-            tail -n 150 "$LOG_FILE"
-
-            echo ""
-            echo "=========================================="
-            echo " BUILD FAILED"
-            echo "=========================================="
-
-            exit "$BUILD_STATUS"
-          fi
-
-          echo ""
-          echo "=========================================="
-          echo " BUILD COMPLETED"
-          echo "=========================================="
-
-      - name: Find APK
-        if: success()
-        shell: bash
-        run: |
-          set -e
-
-          APK="$(find "$PROJECT_DIR" \
-            -type f \
-            -path '*/build/outputs/apk/debug/*.apk' \
-            -print -quit)"
-
-          if [ -z "$APK" ]; then
-            echo "::error::APK was not produced."
+            echo "ERROR: Known invalid scanner call still exists."
             exit 1
           fi
 
-          mkdir -p "$GITHUB_WORKSPACE/final-apk"
+          echo "CPDScannerEngine validation passed."
 
-          cp "$APK" \
-            "$GITHUB_WORKSPACE/final-apk/CPD_SUPER_WIZARD_AI_V7_6_BALANCED.apk"
-
-          echo "APK found:"
-          echo "$APK"
-
-      - name: Upload APK
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: CPD-SUPER-WIZARD-AI-V7.6-APK
-          path: final-apk/CPD_SUPER_WIZARD_AI_V7_6_BALANCED.apk
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload build log if failed
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: CPD-V7.6-BUILD-LOG
-          path: build.log
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Build summary
-        if: success()
+      # ------------------------------------------------------------
+      # 10. Show important build configuration
+      # ------------------------------------------------------------
+      - name: Show V7.6 build configuration
         shell: bash
         run: |
-          echo "======================================"
-          echo " C.P.D SUPER WIZARD AI V7.6"
-          echo " BUILD SUCCESSFUL"
-          echo "======================================"
+          set -euo pipefail
 
-          ls -lh final-apk/
+          echo "----- Root build.gradle -----"
+          cat "$PROJECT_DIR/build.gradle"
+
+          echo
+          echo "----- app/build.gradle -----"
+          cat "$PROJECT_DIR/app/build.gradle"
+
+          echo
+          echo "----- settings.gradle -----"
+          cat "$PROJECT_DIR/settings.gradle"
+
+      # ------------------------------------------------------------
+      # 11. Build the EXISTING V7.6 project
+      #
+      # If another Java compiler error exists, Gradle stops here.
+      # We do NOT guess or automatically modify unrelated source.
+      # ------------------------------------------------------------
+      - name: Build V7.6 debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -o pipefail
+
+          gradle \
+            --no-daemon \
+            --stacktrace \
+            assembleDebug \
+            2>&1 | tee "$GITHUB_WORKSPACE/v7_6_build.log"
+
+      # ------------------------------------------------------------
+      # 12. Find APK
+      # ------------------------------------------------------------
+      - name: Find built APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="$(
+            find "$PROJECT_DIR" \
+              -type f \
+              -path '*/build/outputs/apk/debug/*.apk' \
+              -print \
+              -quit
+          )"
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not produced."
+            exit 1
+          fi
+
+          echo "APK:"
+          echo "$APK"
+
+          cp "$APK" \
+            "$GITHUB_WORKSPACE/CPD-SUPER-WIZARD-AI-V7.6-debug.apk"
+
+          echo "APK_FILE=$GITHUB_WORKSPACE/CPD-SUPER-WIZARD-AI-V7.6-debug.apk" \
+            >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------
+      # 13. Create corrected V7.6 source ZIP
+      #
+      # The ORIGINAL master ZIP remains untouched.
+      # ------------------------------------------------------------
+      - name: Create corrected V7.6 ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTPUT="$GITHUB_WORKSPACE/CPD_SUPER_WIZARD_AI_V7_6_BALANCED_NO_OVERFIT_CORRECTED.zip"
+
+          rm -f "$OUTPUT"
+
+          cd "$PROJECT_DIR"
+
+          zip -qr "$OUTPUT" . \
+            -x '*.gradle/*' \
+            -x '*/build/*' \
+            -x '.gradle/*' \
+            -x '.idea/*' \
+            -x '*.iml'
+
+          echo "Corrected V7.6 ZIP created:"
+          echo "$OUTPUT"
+
+          unzip -t "$OUTPUT" >/dev/null
+
+      # ------------------------------------------------------------
+      # 14. Upload APK + corrected source ZIP
+      # ------------------------------------------------------------
+      - name: Upload V7.6 build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CPD-SUPER-WIZARD-AI-V7.6-BUILD
+          path: |
+            CPD-SUPER-WIZARD-AI-V7.6-debug.apk
+            CPD_SUPER_WIZARD_AI_V7_6_BALANCED_NO_OVERFIT_CORRECTED.zip
+          if-no-files-found: error
+
+      # ------------------------------------------------------------
+      # 15. Upload build log separately
+      #
+      # Useful if the next real compiler error appears.
+      # ------------------------------------------------------------
+      - name: Upload V7.6 build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CPD-SUPER-WIZARD-AI-V7.6-BUILD-LOG
+          path: v7_6_build.log
+          if-no-files-found: ignore
